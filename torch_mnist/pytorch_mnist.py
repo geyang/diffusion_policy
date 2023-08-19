@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torchvision import datasets, transforms
+from einops.layers.torch import Rearrange
 from torch.optim.lr_scheduler import StepLR
+from torchvision import datasets, transforms
 
 from params_proto import ParamsProto, Proto, Flag
 
@@ -24,55 +25,50 @@ class Args(ParamsProto):
         100, help="how many batches to wait before logging training status"
     )
 
-    save_model = Flag(help="For Saving the current Model")
-    device = "mps"
-    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    save_checkpoint = Proto("checkpoints/net.pt", help="For Saving the current Model")
 
-    # PLU Specific Experimental Flags
-    # act_fn_1 = "plu"
-
-
-# act_fns = dict(
-#     sine=lambda x: torch.sin(x),
-#     plu=lambda x: torch.stack([torch.abs(x % 2), torch.abs(-x % 2)]).min(dim=0).values
-#     - 0.5,
-# )
+    if torch.backends.mps:
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
 
 
-class Net(nn.Module):
+class CNN(nn.Sequential):
     def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 100, 3, 1)
-        self.conv2 = nn.Conv2d(100, 64, 3, 1)
-        self.dropout1 = nn.Dropout(0.25)
-        self.dropout2 = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
+        super().__init__(
+            nn.Conv2d(1, 100, 3, 1),
+            nn.ReLU(),
+            nn.Conv2d(100, 64, 3, 1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout(0.25),
+            Rearrange("b c h w -> b (c h w)"),
+            nn.Linear(9216, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, 10),
+            nn.LogSoftmax(dim=1),
+        )
 
-    def forward(self, x):
-        # act_fn_1 = act_fns.get(Args.act_fn_1, None) or getattr(F, Args.act_fn_1)
 
-        # note: A few things are off:
-        #   MNIST is probably not the best task, because the color distribution is binary.
-        #   ~
-        #   1. We do need to increase the number of channels to 3 * 40, judging from experience.
-        #   2. Hard to fairly compare speed and computation complexity.
-        #   3. The sparsity bias for ReLU to set the output to 0 is missing.
-        x = self.conv1(x)
-        # x = act_fn_1(10 * x)
-        x = F.relu(x)
-        x = self.dropout1(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 2)
-        x = self.dropout1(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.dropout2(x)
-        x = self.fc2(x)
-        output = F.log_softmax(x, dim=1)
-        return output
+class MLP(nn.Sequential):
+    def __init__(self):
+        super().__init__(
+            nn.Linear(784, 100),
+            nn.ReLU(),
+            nn.Dropout(0.25),
+            nn.Linear(100, 100),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout(0.25),
+            nn.Linear(50, 50),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(50, 10),
+            nn.LogSoftmax(dim=1),
+        )
 
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -124,12 +120,7 @@ def main(**kwargs):
 
     torch.manual_seed(Args.seed)
 
-    train_kwargs = {"batch_size": Args.batch_size}
-    test_kwargs = {"batch_size": Args.test_batch_size}
-
-    cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
-    train_kwargs.update(cuda_kwargs)
-    test_kwargs.update(cuda_kwargs)
+    dwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
 
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
@@ -138,20 +129,29 @@ def main(**kwargs):
         Args.dataset_root, train=True, download=True, transform=transform
     )
     dataset2 = datasets.MNIST(Args.dataset_root, train=False, transform=transform)
-    train_loader = torch.utils.data.DataLoader(dataset1, **train_kwargs)
-    test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
+    train_loader = torch.utils.data.DataLoader(
+        dataset1, batch_size=Args.batch_size, **dwargs
+    )
+    test_loader = torch.utils.data.DataLoader(
+        dataset2, batch_size=Args.test_batch_size, **dwargs
+    )
 
-    model = Net().to(Args.device)
+    model = CNN().to(Args.device)
+    # x = torch.zeros([1, 1, 28, 28]).to(Args.device)
+    # model_train = torch.jit.trace(model.train(), x)
+    # model_eval = torch.jit.trace(model.eval(), x)
+
     optimizer = optim.Adadelta(model.parameters(), lr=Args.lr)
 
     scheduler = StepLR(optimizer, step_size=1, gamma=Args.gamma)
+
     for epoch in range(1, Args.epochs + 1):
         train(Args, model, Args.device, train_loader, optimizer, epoch)
         evaluate(model, Args.device, test_loader)
         scheduler.step()
 
-    if Args.save_model:
-        torch.save(model.state_dict(), "mnist_cnn.pt")
+    if Args.save_checkpoint:
+        logger.torch_save(model, Args.save_checkpoint)
 
     logger.job_completed()
 
