@@ -12,6 +12,8 @@ from params_proto import ParamsProto, Proto, Flag
 class Args(ParamsProto):
     """PyTorch MNIST Example"""
 
+    net: str = Proto("CNN", help="CNN or MLP")
+
     dataset_root = Proto(env="$DATASETS", help="path to datasets")
     batch_size = Proto(64, help="input batch size for training (default: 64)")
     test_batch_size = Proto(1000, help="input batch size for testing (default: 1000)")
@@ -25,14 +27,16 @@ class Args(ParamsProto):
         100, help="how many batches to wait before logging training status"
     )
 
-    save_checkpoint = Proto("checkpoints/net.pt", help="For Saving the current Model")
-
     if torch.backends.mps:
         device = "mps"
     elif torch.cuda.is_available():
         device = "cuda"
     else:
         device = "cpu"
+
+    save_checkpoint = Flag(
+        to_value="checkpoints/net.pt", help="For Saving the current Model"
+    )
 
 
 class CNN(nn.Sequential):
@@ -84,8 +88,6 @@ def train(args, model, device, train_loader, optimizer, epoch):
             print(
                 f"Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100.0 * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}"
             )
-            # if args.dry_run:
-            #     break
 
 
 def evaluate(model, device, test_loader):
@@ -136,7 +138,8 @@ def main(**kwargs):
         dataset2, batch_size=Args.test_batch_size, **dwargs
     )
 
-    model = CNN().to(Args.device)
+    Net = eval(Args.net)
+    model = Net().to(Args.device)
     # x = torch.zeros([1, 1, 28, 28]).to(Args.device)
     # model_train = torch.jit.trace(model.train(), x)
     # model_eval = torch.jit.trace(model.eval(), x)
