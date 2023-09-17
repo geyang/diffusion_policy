@@ -176,11 +176,11 @@ if __name__ == "__main__":
 #     import jaynes
 #
 #     from ml_logger.job import instr
-#     from diffusion_policy.analysis import machine_list
+#     from diffusion_policy.iclr_analysis import machine_list
 #     from diffusion_policy.ddpm import main
 #
 #     jaynes.config("visiongpu-docker")
-#     sweep = Sweep(DDPM, RUN).load("analysis/sweeps/ddpm.jsonl")
+#     sweep = Sweep(DDPM, RUN).load("iclr_analysis/sweeps/ddpm.jsonl")
 #
 #     for i, deps in enumerate(sweep):
 #         ip, gpu_id = machine_list[i % len(machine_list)]
